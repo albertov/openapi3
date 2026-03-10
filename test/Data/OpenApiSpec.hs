@@ -38,11 +38,19 @@ spec = do
   describe "OAuth2 Security Definitions with merged Scope" $ oAuth2SecurityDefinitionsExample <=> oAuth2SecurityDefinitionsExampleJSON
   describe "OAuth2 Security Definitions with empty Scope" $ oAuth2SecurityDefinitionsEmptyExample <=> oAuth2SecurityDefinitionsEmptyExampleJSON
   describe "Composition Schema Example" $ compositionSchemaExample <=> compositionSchemaExampleJSON
+  describe "Discriminator Object" $ do
+    it "parses discriminator without mapping field" $ do
+      let json = [aesonQQ|{"propertyName": "petType"}|]
+      case fromJSON json :: Result Discriminator of
+        Success d -> _discriminatorPropertyName d `shouldBe` "petType"
+        Error err -> expectationFailure $ "Expected Success, got: " <> err
   describe "Swagger Object" $ do
     context "Example with no paths" $ do 
       emptyPathsFieldExample <=> emptyPathsFieldExampleJSON
+      it "accepts OpenAPI 3.0.4 as a valid spec version" $ do
+        fromJSON wrongVersionExampleJSON `shouldSatisfy` (\x -> case x of Success (_ :: OpenApi) -> True; _ -> False)
       it "fails to parse a spec with a wrong Openapi spec version" $ do
-        (fromJSON wrongVersionExampleJSON :: Result OpenApi) `shouldBe` Error "The provided version 3.0.4 is out of the allowed range >=3.0.0 && <=3.0.3"
+        (fromJSON wrongMajorVersionExampleJSON :: Result OpenApi) `shouldBe` Error "The provided version 4.0.0 is out of the allowed range >=3.0.0 && <=3.0.4"
     context "Todo Example" $ swaggerExample <=> swaggerExampleJSON
     context "PetStore Example" $ do
       it "decodes successfully" $ do
@@ -589,6 +597,16 @@ wrongVersionExampleJSON :: Value
 wrongVersionExampleJSON = [aesonQQ|
 {
   "openapi": "3.0.4",
+  "info": {"version": "", "title": ""},
+  "paths": {},
+  "components": {}
+}
+|]
+
+wrongMajorVersionExampleJSON :: Value
+wrongMajorVersionExampleJSON = [aesonQQ|
+{
+  "openapi": "4.0.0",
   "info": {"version": "", "title": ""},
   "paths": {},
   "components": {}

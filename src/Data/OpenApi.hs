@@ -84,7 +84,7 @@ module Data.OpenApi (
   -- ** Responses
   Responses(..),
   Response(..),
-  HttpStatusCode,
+  HttpStatusCode(..),
   Link(..),
   Callback(..),
 

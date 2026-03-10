@@ -112,7 +112,7 @@ lowerOpenApiSpecVersion = makeVersion [3, 0, 0]
 
 -- | This is the upper version of the OpenApi Spec this library can parse or produce
 upperOpenApiSpecVersion :: Version
-upperOpenApiSpecVersion = makeVersion [3, 0, 3]
+upperOpenApiSpecVersion = makeVersion [3, 0, 4]
 
 -- | The object provides metadata about the API.
 -- The metadata MAY be used by the clients if needed,
@@ -683,7 +683,7 @@ data Discriminator = Discriminator
     _discriminatorPropertyName :: Text
 
     -- | An object to hold mappings between payload values and schema names or references.
-  , _discriminatorMapping :: InsOrdHashMap Text Text
+  , _discriminatorMapping :: Maybe (InsOrdHashMap Text Text)
   } deriving (Eq, Show, Generic, Data, Typeable)
 
 -- | A @'Schema'@ with an optional name.
@@ -736,7 +736,45 @@ data Responses = Responses
   , _responsesResponses :: InsOrdHashMap HttpStatusCode (Referenced Response)
   } deriving (Eq, Show, Generic, Data, Typeable)
 
-type HttpStatusCode = Int
+-- | HTTP status code: either a concrete code (200, 404) or a wildcard
+-- range (1XX, 2XX, 3XX, 4XX, 5XX) as permitted by OpenAPI 3.0.
+data HttpStatusCode
+  = HttpStatusCode Int        -- ^ Concrete status code, e.g. 200, 404
+  | HttpStatusRange Int       -- ^ Wildcard range digit, e.g. 2 for "2XX"
+  deriving (Eq, Ord, Show, Generic, Data, Typeable)
+
+instance Hashable HttpStatusCode where
+  hashWithSalt salt (HttpStatusCode n) = hashWithSalt salt (0 :: Int, n)
+  hashWithSalt salt (HttpStatusRange n) = hashWithSalt salt (1 :: Int, n)
+
+-- | Num instance for backward compatibility: integer literals like @200@, @404@
+-- are interpreted as @HttpStatusCode n@. Arithmetic operations are not meaningful
+-- and will error — this instance exists solely for @fromInteger@ / @OverloadedLiterals@.
+instance Num HttpStatusCode where
+  fromInteger = HttpStatusCode . fromInteger
+  (+) = error "HttpStatusCode: arithmetic not supported"
+  (-) = error "HttpStatusCode: arithmetic not supported"
+  (*) = error "HttpStatusCode: arithmetic not supported"
+  abs = error "HttpStatusCode: arithmetic not supported"
+  signum = error "HttpStatusCode: arithmetic not supported"
+
+instance ToJSON HttpStatusCode where
+  toJSON (HttpStatusCode n) = toJSON (show n)
+  toJSON (HttpStatusRange n) = toJSON (show n <> "XX")
+  toEncoding (HttpStatusCode n) = toEncoding (show n)
+  toEncoding (HttpStatusRange n) = toEncoding (show n <> "XX")
+
+instance FromJSON HttpStatusCode where
+  parseJSON = withText "HttpStatusCode" $ \t ->
+    if t == "default"
+      then fail "Should not parse 'default' as HttpStatusCode"
+      else if Text.isSuffixOf "XX" t
+        then case Text.unpack (Text.dropEnd 2 t) of
+          [c] | c >= '1' && c <= '5' -> pure (HttpStatusRange (fromEnum c - fromEnum '0'))
+          _ -> fail $ "Invalid wildcard status code: " <> Text.unpack t
+        else case readMaybe (Text.unpack t) :: Maybe Int of
+          Just n -> pure (HttpStatusCode n)
+          Nothing -> fail $ "Invalid HTTP status code: " <> Text.unpack t
 
 -- | Describes a single response from an API Operation.
 data Response = Response
@@ -1535,10 +1573,31 @@ instance FromJSON MimeList where
 instance FromJSON Param where
   parseJSON = sopSwaggerGenericParseJSON
 
+instance ToJSONKey HttpStatusCode where
+  toJSONKey = JSON.toJSONKeyText httpStatusCodeToText
+    where
+      httpStatusCodeToText (HttpStatusCode n) = Text.pack (show n)
+      httpStatusCodeToText (HttpStatusRange n) = Text.pack (show n) <> "XX"
+
+instance FromJSONKey HttpStatusCode where
+  fromJSONKey = JSON.FromJSONKeyTextParser parseHttpStatusCodeKey
+    where
+      parseHttpStatusCodeKey t
+        | t == "default" = fail "Should not parse 'default' as HttpStatusCode"
+        | Text.isSuffixOf "XX" t =
+            case Text.unpack (Text.dropEnd 2 t) of
+              [c] | c >= '1' && c <= '5' -> pure (HttpStatusRange (fromEnum c - fromEnum '0'))
+              _ -> fail $ "Invalid wildcard status code: " <> Text.unpack t
+        | otherwise =
+            case readMaybe (Text.unpack t) :: Maybe Int of
+              Just n -> pure (HttpStatusCode n)
+              Nothing -> fail $ "Invalid HTTP status code: " <> Text.unpack t
+
 instance FromJSON Responses where
-  parseJSON (Object o) = Responses
-    <$> o .:? "default"
-    <*> parseJSON (Object (deleteKey "default" o))
+  parseJSON (Object o) = do
+    defaultResp <- o .:? "default"
+    responsesMap <- parseJSON (Object (deleteKey "default" o))
+    pure $ Responses defaultResp responsesMap
   parseJSON _ = empty
 
 instance FromJSON Example where
@@ -1581,8 +1640,12 @@ referencedParseJSON prefix js@(Object o) = do
   where
     parseRef s = do
       case Text.stripPrefix prefix s of
-        Nothing     -> fail $ "expected $ref of the form \"" <> Text.unpack prefix <> "*\", but got " <> show s
+        -- Standard component ref: strip the prefix, use the component name.
         Just suffix -> pure (Reference suffix)
+        -- Non-standard inline ref (e.g. "#/paths/~1foo/..."):
+        -- accept as-is rather than failing — the normalizer will treat it
+        -- as an unknown reference and degrade gracefully.
+        Nothing     -> pure (Reference s)
 referencedParseJSON _ _ = fail "referenceParseJSON: not an object"
 
 instance FromJSON (Referenced Schema)   where parseJSON = referencedParseJSON "#/components/schemas/"
@@ -1653,7 +1716,10 @@ instance AesonDefaultValue Version where
   defaultValue = Just (makeVersion [3,0,0])
 instance AesonDefaultValue OpenApiSpecVersion
 instance AesonDefaultValue Server
-instance AesonDefaultValue Components
+-- | Per OpenAPI 3.0 spec §4.8.7, @components@ is optional.
+-- Providing a default empty value makes the field optional during JSON parsing.
+instance AesonDefaultValue Components where
+  defaultValue = Just (Components mempty mempty mempty mempty mempty mempty mempty mempty mempty)
 instance AesonDefaultValue OAuth2ImplicitFlow
 instance AesonDefaultValue OAuth2PasswordFlow
 instance AesonDefaultValue OAuth2ClientCredentialsFlow
