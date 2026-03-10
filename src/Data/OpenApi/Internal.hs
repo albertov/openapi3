@@ -737,10 +737,10 @@ data Responses = Responses
   } deriving (Eq, Show, Generic, Data, Typeable)
 
 -- | HTTP status code: either a concrete code (200, 404) or a wildcard
--- range (1XX, 2XX, 3XX, 4XX, 5XX) as permitted by OpenAPI 3.0.
+-- range (1xx, 2xx, 3xx, 4xx, 5xx) as permitted by OpenAPI 3.0.
 data HttpStatusCode
   = HttpStatusCode Int        -- ^ Concrete status code, e.g. 200, 404
-  | HttpStatusRange Int       -- ^ Wildcard range digit, e.g. 2 for "2XX"
+  | HttpStatusRange Int       -- ^ Wildcard range digit, e.g. 2 for "2xx"
   deriving (Eq, Ord, Show, Generic, Data, Typeable)
 
 instance Hashable HttpStatusCode where
@@ -760,15 +760,15 @@ instance Num HttpStatusCode where
 
 instance ToJSON HttpStatusCode where
   toJSON (HttpStatusCode n) = toJSON (show n)
-  toJSON (HttpStatusRange n) = toJSON (show n <> "XX")
+  toJSON (HttpStatusRange n) = toJSON (show n <> "xx")
   toEncoding (HttpStatusCode n) = toEncoding (show n)
-  toEncoding (HttpStatusRange n) = toEncoding (show n <> "XX")
+  toEncoding (HttpStatusRange n) = toEncoding (show n <> "xx")
 
 instance FromJSON HttpStatusCode where
   parseJSON = withText "HttpStatusCode" $ \t ->
     if t == "default"
       then fail "Should not parse 'default' as HttpStatusCode"
-      else if Text.isSuffixOf "XX" t
+      else if Text.isSuffixOf "xx" (Text.toLower t)
         then case Text.unpack (Text.dropEnd 2 t) of
           [c] | c >= '1' && c <= '5' -> pure (HttpStatusRange (fromEnum c - fromEnum '0'))
           _ -> fail $ "Invalid wildcard status code: " <> Text.unpack t
@@ -1577,14 +1577,14 @@ instance ToJSONKey HttpStatusCode where
   toJSONKey = JSON.toJSONKeyText httpStatusCodeToText
     where
       httpStatusCodeToText (HttpStatusCode n) = Text.pack (show n)
-      httpStatusCodeToText (HttpStatusRange n) = Text.pack (show n) <> "XX"
+      httpStatusCodeToText (HttpStatusRange n) = Text.pack (show n) <> "xx"
 
 instance FromJSONKey HttpStatusCode where
   fromJSONKey = JSON.FromJSONKeyTextParser parseHttpStatusCodeKey
     where
       parseHttpStatusCodeKey t
         | t == "default" = fail "Should not parse 'default' as HttpStatusCode"
-        | Text.isSuffixOf "XX" t =
+        | Text.isSuffixOf "xx" (Text.toLower t) =
             case Text.unpack (Text.dropEnd 2 t) of
               [c] | c >= '1' && c <= '5' -> pure (HttpStatusRange (fromEnum c - fromEnum '0'))
               _ -> fail $ "Invalid wildcard status code: " <> Text.unpack t
